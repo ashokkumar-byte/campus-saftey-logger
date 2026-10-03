@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Safety Logger - Student Reports</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body data-page="student-reports">
+  <header class="topbar">
+    <div class="brand-text">Campus Safety Logger</div>
+    <div class="topbar-actions">
+      <span id="userName" class="muted">Loading...</span>
+      <button id="logoutButton" class="logout-btn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="sidebar">
+      <nav class="nav-list">
+        <a class="nav-link" href="/dashboard">Dashboard</a>
+        <a class="nav-link active" href="/reports">Student Reports</a>
+        <a class="nav-link" href="/profile">Profile</a>
+      </nav>
+    </aside>
+
+    <section class="content">
+      <div class="page-header">
+        <h1>Student Reports</h1>
+      </div>
+
+      <div class="card">
+        <h2 id="formTitle">Create Safety Report</h2>
+        <form id="reportForm" enctype="multipart/form-data">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="reportCategory">Category</label>
+              <select id="reportCategory" name="category" required>
+                <option value="Safety">Safety</option>
+                <option value="Facilities">Facilities</option>
+                <option value="Medical">Medical</option>
+                <option value="Harassment">Harassment</option>
+                <option value="Security">Security</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="campusLocation">Location</label>
+              <input id="campusLocation" name="campus_location" type="text" maxlength="120" required />
+            </div>
+            <div class="form-group">
+              <label for="reportSeverity">Severity</label>
+              <select id="reportSeverity" name="severity" required>
+                <option value="Critical">Critical</option>
+                <option value="High">High</option>
+                <option value="Medium" selected>Medium</option>
+                <option value="Low">Low</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="incidentDateTime">Date &amp; Time</label>
+              <input id="incidentDateTime" name="incident_datetime" type="datetime-local" step="60" required />
+            </div>
+            <div class="form-group full-width">
+              <label for="reportDescription">Description</label>
+              <textarea id="reportDescription" name="description" rows="5" maxlength="5000" required></textarea>
+            </div>
+            <div class="form-group full-width">
+              <label for="reportEvidence">Evidence / Photo (optional)</label>
+              <input id="reportEvidence" name="evidence" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+            </div>
+          </div>
+          <div class="status-actions">
+            <button type="submit" class="primary-btn">Submit Safety Report</button>
+            <button id="cancelEdit" type="button" class="secondary-btn" hidden>Cancel</button>
+          </div>
+          <div id="reportMessage" class="message-box" role="alert"></div>
+        </form>
+      </div>
+
+      <div id="studentReportDetail" class="card" style="display:none; margin-top:20px;"></div>
+
+      <hr class="hr" />
+
+      <div class="card table-wrap">
+        <h2>My Reports</h2>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Report ID</th>
+              <th>Title</th>
+              <th>Category</th>
+              <th>Status</th>
+              <th>Severity</th>
+              <th>Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="studentReportsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

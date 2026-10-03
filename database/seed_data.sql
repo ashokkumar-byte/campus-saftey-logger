@@ -1,0 +1,1 @@
+-- Default management account is created by app.py with a hashed password.

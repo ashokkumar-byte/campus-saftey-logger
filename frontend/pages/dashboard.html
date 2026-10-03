@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Safety Logger - Dashboard</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body data-page="dashboard">
+  <header class="topbar">
+    <div class="brand-text">Campus Safety Logger</div>
+    <div class="topbar-actions">
+      <span id="userName" class="muted">Loading...</span>
+      <button id="logoutButton" class="logout-btn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="sidebar">
+      <nav class="nav-list">
+        <a class="nav-link active" href="/dashboard">Dashboard</a>
+        <a class="nav-link" href="/reports">Student Reports</a>
+        <a class="nav-link" href="/profile">Profile</a>
+      </nav>
+    </aside>
+
+    <section class="content">
+      <div class="page-header">
+        <h1>Student Dashboard</h1>
+        <a class="primary-btn button-link" href="/reports">Create Report</a>
+      </div>
+
+      <section class="card dashboard-intro" aria-labelledby="welcomeHeading">
+        <div>
+          <p class="eyebrow">CAMPUS SAFETY LOGGER</p>
+          <h2 id="welcomeHeading">Welcome back, <span id="welcomeName">Student</span></h2>
+        </div>
+        <div class="profile-summary">
+          <strong>Student account</strong>
+          <span id="profileEmail">Loading profile...</span>
+        </div>
+      </section>
+
+      <div class="stats-grid" id="statsGrid"><div class="empty-state">Loading dashboard...</div></div>
+
+      <div class="grid-two">
+        <div class="card list-panel">
+          <div class="section-heading">
+            <h2>Recent Reports</h2>
+            <a href="/reports">All reports</a>
+          </div>
+          <div id="recentReports" class="report-list"><div class="empty-state">Loading reports...</div></div>
+        </div>
+
+        <div class="card">
+          <div class="section-heading">
+            <h2>Notifications</h2>
+            <button id="markNotificationsRead" class="secondary-btn" type="button">Mark all read</button>
+          </div>
+          <div id="notifications"><div class="empty-state">Loading notifications...</div></div>
+        </div>
+      </div>
+
+      <section class="dashboard-reports-section" aria-labelledby="myReportsHeading">
+        <div class="section-heading">
+          <h2 id="myReportsHeading">My Reports</h2>
+          <span id="dashboardReportCount" class="muted-text"></span>
+        </div>
+        <div class="report-toolbar">
+          <label class="sr-only" for="dashboardReportSearch">Search my reports</label>
+          <input id="dashboardReportSearch" type="search" placeholder="Search report ID, category, location..." />
+          <label class="sr-only" for="dashboardReportStatus">Filter reports by status</label>
+          <select id="dashboardReportStatus">
+            <option value="all">All statuses</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Under Review">Under Review</option>
+            <option value="Assigned">Assigned</option>
+            <option value="Investigating">Investigating</option>
+            <option value="Action Taken">Action Taken</option>
+            <option value="Resolved">Resolved</option>
+            <option value="Closed">Closed</option>
+          </select>
+        </div>
+        <div class="card table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Report ID</th>
+                <th>Category</th>
+                <th>Location</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="dashboardReportsBody"><tr><td colspan="6" class="empty-state">Loading reports...</td></tr></tbody>
+          </table>
+        </div>
+        <div id="dashboardReportDetail" class="card report-detail-panel" hidden></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

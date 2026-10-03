@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Campus Safety Logger - Profile</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body data-page="profile">
+  <header class="topbar">
+    <div class="brand-text">Campus Safety Logger</div>
+    <div class="topbar-actions">
+      <span id="userName" class="muted">Loading...</span>
+      <button id="logoutButton" class="logout-btn" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="sidebar">
+      <nav class="nav-list">
+        <a class="nav-link" href="/dashboard">Dashboard</a>
+        <a class="nav-link" href="/reports">Student Reports</a>
+        <a class="nav-link" href="/management/dashboard">Management Dashboard</a>
+        <a class="nav-link active" href="/profile">Profile</a>
+      </nav>
+    </aside>
+
+    <section class="content">
+      <div class="page-header">
+        <h1>My Profile</h1>
+      </div>
+
+      <div class="card">
+        <h2>Account Overview</h2>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="profileFullName">Full Name</label>
+            <input id="profileFullName" type="text" placeholder="Your full name" />
+          </div>
+          <div class="form-group">
+            <label for="profileRole">Role</label>
+            <input id="profileRole" type="text" readonly />
+          </div>
+          <div class="form-group full-width">
+            <label for="profileEmail">Email Address</label>
+            <input id="profileEmail" type="email" placeholder="name@example.com" />
+          </div>
+        </div>
+        <div class="status-actions">
+          <button id="saveProfileButton" class="primary-btn" type="button">Save Profile</button>
+        </div>
+        <div id="profileMessage" class="message-box" role="alert"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>
