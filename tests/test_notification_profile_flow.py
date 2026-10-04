@@ -68,6 +68,7 @@ class NotificationAndProfileFlowTests(unittest.TestCase):
         notification = next(item for item in management_notifications["notifications"] if item["report_id"] == report["id"])
         read_response = self.management.post(f"/api/notifications/{notification['id']}/read")
         self.assertEqual(read_response.status_code, 200)
+        self.assertTrue(read_response.get_json()["notification"]["is_read"])
 
         update_response = self.management.post(
             f"/api/reports/{report['id']}/management",
@@ -81,6 +82,7 @@ class NotificationAndProfileFlowTests(unittest.TestCase):
 
         student_notifications = self.student.get("/api/notifications").get_json()
         self.assertTrue(any("Under Review" in item["message"] or "reviewing" in item["message"].lower() for item in student_notifications["notifications"]))
+        self.assertIn("status changed to Under Review", student_notifications["notifications"][0]["message"])
 
         profile = self.student.get("/api/auth/profile").get_json()
         self.assertEqual(profile["user"]["email"], "student@example.com")
@@ -91,3 +93,16 @@ class NotificationAndProfileFlowTests(unittest.TestCase):
         )
         self.assertEqual(updated_profile.status_code, 200)
         self.assertEqual(self.student.get("/api/auth/profile").get_json()["user"]["full_name"], "Student Updated")
+
+    def test_profile_rejects_invalid_email_and_duplicate_email(self):
+        invalid_email = self.student.patch(
+            "/api/auth/profile",
+            json={"email": "not-an-email"},
+        )
+        self.assertEqual(invalid_email.status_code, 400)
+
+        duplicate_email = self.student.patch(
+            "/api/auth/profile",
+            json={"email": "management@example.com"},
+        )
+        self.assertEqual(duplicate_email.status_code, 409)

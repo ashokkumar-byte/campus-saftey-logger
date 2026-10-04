@@ -1,8 +1,19 @@
 import os, sqlite3
 from contextlib import closing
+from datetime import timedelta
 from flask import Flask, redirect, send_from_directory, session
-from werkzeug.security import check_password_hash, generate_password_hash
-from config import SECRET_KEY, DATABASE_DIR, DATABASE_PATH, UPLOAD_FOLDER
+from werkzeug.security import generate_password_hash
+from config import (
+    DEFAULT_ADMIN_EMAIL,
+    DEFAULT_ADMIN_PASSWORD,
+    DATABASE_DIR,
+    DATABASE_PATH,
+    IS_PRODUCTION,
+    MAX_CONTENT_LENGTH,
+    SCHEMA_PATH,
+    SECRET_KEY,
+    UPLOAD_FOLDER,
+)
 from backend.models.user_model import get_user_by_id
 from backend.routes.auth_routes import auth_bp
 from backend.routes.report_routes import report_bp
@@ -12,20 +23,27 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 PAGES_DIR = os.path.join(FRONTEND_DIR, "pages")
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = SECRET_KEY
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config.update(
+    SECRET_KEY=SECRET_KEY,
+    UPLOAD_FOLDER=UPLOAD_FOLDER,
+    MAX_CONTENT_LENGTH=MAX_CONTENT_LENGTH,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=IS_PRODUCTION,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
 
 def initialize_database():
     os.makedirs(DATABASE_DIR, exist_ok=True)
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     if not os.path.exists(DATABASE_PATH):
         with closing(sqlite3.connect(DATABASE_PATH)) as connection:
-            with open(os.path.join(DATABASE_DIR, "schema.sql"), encoding="utf-8") as f:
+            with open(SCHEMA_PATH, encoding="utf-8") as f:
                 connection.executescript(f.read())
 
 
 def ensure_database_upgrade(database_path=DATABASE_PATH):
+    os.makedirs(os.path.dirname(os.path.abspath(database_path)), exist_ok=True)
     with closing(sqlite3.connect(database_path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         tables = {
@@ -49,7 +67,7 @@ def ensure_database_upgrade(database_path=DATABASE_PATH):
                 """
             )
         if "reports" not in tables:
-            with open(os.path.join(DATABASE_DIR, "schema.sql"), encoding="utf-8") as f:
+            with open(SCHEMA_PATH, encoding="utf-8") as f:
                 connection.executescript(f.read())
 
         reports_columns = {row[1] for row in connection.execute("PRAGMA table_info(reports)").fetchall()}
@@ -117,27 +135,33 @@ def ensure_database_upgrade(database_path=DATABASE_PATH):
                 connection.execute("UPDATE reports SET report_id = ? WHERE id = ?", (candidate, row[0]))
             seen_report_ids.add(candidate)
         connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_reports_report_id ON reports(report_id)")
-        with open(os.path.join(DATABASE_DIR, "schema.sql"), encoding="utf-8") as f:
+        with open(SCHEMA_PATH, encoding="utf-8") as f:
             connection.executescript(f.read())
         connection.commit()
 
 
-def create_default_management(database_path=DATABASE_PATH):
+def create_default_management(database_path=DATABASE_PATH, email=None, password=None):
+    email = email or DEFAULT_ADMIN_EMAIL
+    password = password or DEFAULT_ADMIN_PASSWORD
+    if not email or not password:
+        raise RuntimeError("ADMIN_EMAIL and ADMIN_PASSWORD must be set before starting the production app.")
+
     with closing(sqlite3.connect(database_path)) as connection:
         exists = connection.execute(
             "SELECT id, password_hash, role, is_active FROM users WHERE LOWER(email)=LOWER(?) LIMIT 1",
-            ("admin@123",)
+            (email,)
         ).fetchone()
         if not exists:
             connection.execute(
-                "INSERT INTO users (full_name,email,password_hash,role,is_active) VALUES (?,?,?,?,?)",
-                ("Campus Management", "admin@123", generate_password_hash("admin"), "management", 1)
+                "INSERT OR IGNORE INTO users (full_name,email,password_hash,role,is_active) VALUES (?,?,?,?,?)",
+                ("Campus Management", email, generate_password_hash(password), "management", 1)
             )
-        elif exists[2] != "management" or not exists[3] or not check_password_hash(exists[1], "admin"):
-            connection.execute(
-                "UPDATE users SET full_name=?, password_hash=?, role='management', is_active=1 WHERE id=?",
-                ("Campus Management", generate_password_hash("admin"), exists[0])
-            )
+            exists = connection.execute(
+                "SELECT id, password_hash, role, is_active FROM users WHERE LOWER(email)=LOWER(?) LIMIT 1",
+                (email,),
+            ).fetchone()
+        if exists[2] != "management" or not exists[3]:
+            raise RuntimeError("The configured management account already exists but is not an active management account.")
         connection.commit()
 
 @app.route("/")
@@ -218,6 +242,11 @@ def frontend_files(filename):
         return redirect("/login")
     return send_from_directory(FRONTEND_DIR, filename)
 
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(FRONTEND_DIR, "favicon.svg", mimetype="image/svg+xml")
+
 app.register_blueprint(auth_bp)
 app.register_blueprint(report_bp)
 
@@ -234,4 +263,5 @@ ensure_database_upgrade()
 create_default_management()
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    debug = not IS_PRODUCTION and os.environ.get("FLASK_DEBUG", "").lower() in {"1", "true"}
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=debug)

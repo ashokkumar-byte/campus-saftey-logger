@@ -63,5 +63,7 @@ def update_user_profile(user_id, full_name=None, email=None):
             "SELECT * FROM users WHERE id = ? LIMIT 1",
             (user_id,),
         ).fetchone()
+    except sqlite3.IntegrityError:
+        return None
     finally:
         connection.close()

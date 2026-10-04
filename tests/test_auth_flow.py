@@ -61,6 +61,13 @@ class AuthFlowTests(unittest.TestCase):
         self.assertNotIn("Management Login", page)
         response.close()
 
+    def test_favicon_is_served(self):
+        response = self.client.get("/favicon.ico")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/svg+xml")
+        response.close()
+
     def test_management_login_alias_redirects_to_the_single_login_page(self):
         response = self.client.get("/management/login")
         self.assertEqual(response.status_code, 302)

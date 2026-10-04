@@ -36,14 +36,6 @@ def _files_to_list(value):
     return []
 
 
-def _bool_value(value):
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, str):
-        return 1 if value.strip().lower() in {"yes", "true", "1", "y"} else 0
-    return 1 if value else 0
-
-
 def _report_to_dict(row):
     if row is None:
         return None
@@ -56,25 +48,12 @@ def _report_to_dict(row):
         "title": row["title"],
         "description": row["description"],
         "category": row["category"],
-        "incident_type": row["incident_type"],
         "campus_location": row["campus_location"],
-        "building_area": row["building_area"],
         "incident_date": row["incident_date"],
         "incident_time": row["incident_time"],
         "severity": row["severity"],
-        "urgency": row["urgency"],
-        "people_involved": row["people_involved"],
-        "witnesses": row["witnesses"],
-        "immediate_danger": bool(row["immediate_danger"]),
-        "injury_involved": bool(row["injury_involved"]),
-        "emergency_assistance_required": bool(row["emergency_assistance_required"]),
         "evidence_files": _files_to_list(row["evidence_files"]),
-        "contact_preference": row["contact_preference"],
-        "additional_details": row["additional_details"],
         "status": row["status"],
-        "assigned_department": row["assigned_department"],
-        "assigned_staff": row["assigned_staff"],
-        "investigation_notes": row["investigation_notes"],
         "management_response": row["management_response"],
         "action_details": row["action_details"],
         "created_at": row["created_at"],
@@ -99,21 +78,11 @@ def create_report(data, student_id):
         "title": str(payload.get("title") or f"{category} report at {campus_location or 'Campus'}").strip(),
         "description": str(payload.get("description", "")).strip(),
         "category": category,
-        "incident_type": str(payload.get("incident_type", category)).strip() or category,
         "campus_location": campus_location,
-        "building_area": str(payload.get("building_area", "")).strip(),
         "incident_date": str(payload.get("incident_date", "")).strip(),
         "incident_time": str(payload.get("incident_time", "")).strip(),
         "severity": str(payload.get("severity", "Medium")).strip() or "Medium",
-        "urgency": str(payload.get("urgency", "Normal")).strip() or "Normal",
-        "people_involved": str(payload.get("people_involved", "")).strip(),
-        "witnesses": str(payload.get("witnesses", "")).strip(),
-        "immediate_danger": _bool_value(payload.get("immediate_danger", "No")),
-        "injury_involved": _bool_value(payload.get("injury_involved", "No")),
-        "emergency_assistance_required": _bool_value(payload.get("emergency_assistance_required", "No")),
         "evidence_files": json.dumps(evidence_files),
-        "contact_preference": str(payload.get("contact_preference", "Email")).strip() or "Email",
-        "additional_details": str(payload.get("additional_details", "")).strip(),
         "status": "Submitted",
     }
 
@@ -192,20 +161,10 @@ def update_report(report_id, data):
             "title": str(data.get("title", current["title"])).strip(),
             "description": str(data.get("description", current["description"])).strip(),
             "category": str(data.get("category", current["category"])).strip() or current["category"],
-            "incident_type": str(data.get("incident_type", current["incident_type"])).strip() or current["incident_type"],
             "campus_location": str(data.get("campus_location", current["campus_location"])).strip(),
-            "building_area": str(data.get("building_area", current["building_area"] or "")).strip(),
             "incident_date": str(data.get("incident_date", current["incident_date"] or "")).strip(),
             "incident_time": str(data.get("incident_time", current["incident_time"] or "")).strip(),
             "severity": str(data.get("severity", current["severity"])).strip() or current["severity"],
-            "urgency": str(data.get("urgency", current["urgency"])).strip() or current["urgency"],
-            "people_involved": str(data.get("people_involved", current["people_involved"] or "")).strip(),
-            "witnesses": str(data.get("witnesses", current["witnesses"] or "")).strip(),
-            "immediate_danger": _bool_value(data.get("immediate_danger", bool(current["immediate_danger"]))),
-            "injury_involved": _bool_value(data.get("injury_involved", bool(current["injury_involved"]))),
-            "emergency_assistance_required": _bool_value(data.get("emergency_assistance_required", bool(current["emergency_assistance_required"]))),
-            "contact_preference": str(data.get("contact_preference", current["contact_preference"] or "Email")).strip() or current["contact_preference"],
-            "additional_details": str(data.get("additional_details", current["additional_details"] or "")).strip(),
         }
 
         evidence_files = data.get("evidence_files")
@@ -350,9 +309,6 @@ def update_management_details(report_id, data, changed_by):
         if new_status not in VALID_STATUSES:
             new_status = current["status"]
 
-        assigned_department = str(data.get("assigned_department", current["assigned_department"] or "")).strip()
-        assigned_staff = str(data.get("assigned_staff", current["assigned_staff"] or "")).strip()
-        investigation_notes = str(data.get("investigation_notes", current["investigation_notes"] or "")).strip()
         management_response = str(data.get("management_response", current["management_response"] or "")).strip()
         action_details = str(data.get("action_details", current["action_details"] or "")).strip()
         response_changed = management_response != str(current["management_response"] or "").strip()
@@ -360,17 +316,16 @@ def update_management_details(report_id, data, changed_by):
         if new_status != current["status"]:
             connection.execute(
                 "INSERT INTO report_status_history (report_id, old_status, new_status, changed_by, notes) VALUES (?, ?, ?, ?, ?)",
-                (report_id, current["status"], new_status, changed_by, investigation_notes or management_response or "Status updated")
+                (report_id, current["status"], new_status, changed_by, management_response or action_details or "Status updated")
             )
 
         connection.execute(
             """
             UPDATE reports
-            SET status = ?, assigned_department = ?, assigned_staff = ?, investigation_notes = ?,
-                management_response = ?, action_details = ?, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, management_response = ?, action_details = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (new_status, assigned_department, assigned_staff, investigation_notes, management_response, action_details, report_id),
+            (new_status, management_response, action_details, report_id),
         )
         if response_changed and management_response:
             connection.execute(
@@ -423,7 +378,7 @@ def get_notifications_for_user(user_id):
     connection = get_connection()
     try:
         rows = connection.execute(
-            "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC",
+            "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC",
             (user_id,),
         ).fetchall()
         return [{

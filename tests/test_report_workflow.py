@@ -60,20 +60,10 @@ class ReportWorkflowTests(unittest.TestCase):
                 "title": "North Hall lighting hazard",
                 "description": "The stairwell is dark after sunset.",
                 "category": "Safety",
-                "incident_type": "Lighting defect",
                 "campus_location": "North Hall",
-                "building_area": "Second floor stairwell",
                 "incident_date": "2026-09-30",
                 "incident_time": "18:30",
                 "severity": "High",
-                "urgency": "Immediate",
-                "people_involved": "Students passing through",
-                "witnesses": "None known",
-                "immediate_danger": "Yes",
-                "injury_involved": "No",
-                "emergency_assistance_required": "No",
-                "contact_preference": "Email",
-                "additional_details": "Please inspect the stairwell lighting.",
                 "evidence": (BytesIO(b"workflow evidence"), "stairwell.jpg"),
             },
             content_type="multipart/form-data",
@@ -95,9 +85,6 @@ class ReportWorkflowTests(unittest.TestCase):
 
         update_payload = {
             "status": "Under Review",
-            "assigned_department": "Campus Security",
-            "assigned_staff": "Officer Test",
-            "investigation_notes": "Inspection scheduled.",
             "action_details": "Temporary lighting installed.",
             "management_response": "We have received the report and assigned an officer.",
         }
@@ -115,7 +102,6 @@ class ReportWorkflowTests(unittest.TestCase):
         detail = student_detail.get_json()
         self.assertEqual(detail["report"]["status"], "Closed")
         self.assertEqual(detail["report"]["action_details"], "Temporary lighting installed.")
-        self.assertEqual(detail["report"]["assigned_department"], "Campus Security")
         self.assertEqual(len(detail["responses"]), 1)
         self.assertEqual(detail["responses"][0]["message"], update_payload["management_response"])
         self.assertEqual([entry["new_status"] for entry in detail["status_history"]], [
@@ -125,7 +111,7 @@ class ReportWorkflowTests(unittest.TestCase):
 
         connection = sqlite3.connect(self.database_path)
         persisted = connection.execute(
-            "SELECT status, action_details, assigned_department FROM reports WHERE id = ?",
+            "SELECT status, action_details FROM reports WHERE id = ?",
             (report["id"],),
         ).fetchone()
         response_count = connection.execute(
@@ -133,7 +119,7 @@ class ReportWorkflowTests(unittest.TestCase):
             (report["id"],),
         ).fetchone()[0]
         connection.close()
-        self.assertEqual(persisted, ("Closed", "Temporary lighting installed.", "Campus Security"))
+        self.assertEqual(persisted, ("Closed", "Temporary lighting installed."))
         self.assertEqual(response_count, 1)
 
     def test_management_only_updates_and_server_validation(self):
@@ -174,6 +160,104 @@ class ReportWorkflowTests(unittest.TestCase):
             json={"status": "Not a valid status"},
         )
         self.assertEqual(invalid_management_status.status_code, 400)
+
+    def test_edit_and_delete_are_limited_to_owned_submitted_reports(self):
+        submitted = self.submit_report()
+        report_id = submitted.get_json()["report"]["id"]
+        update = {"description": "Updated description."}
+
+        for client in (self.other_student, self.management):
+            self.assertEqual(client.patch(f"/api/reports/{report_id}", json=update).status_code, 403)
+            self.assertEqual(client.delete(f"/api/reports/{report_id}").status_code, 403)
+
+        own_update = self.student.patch(f"/api/reports/{report_id}", json=update)
+        self.assertEqual(own_update.status_code, 200, own_update.get_json())
+        self.assertEqual(own_update.get_json()["report"]["description"], update["description"])
+
+        management_update = self.management.post(
+            f"/api/reports/{report_id}/management",
+            json={"status": "Under Review"},
+        )
+        self.assertEqual(management_update.status_code, 200, management_update.get_json())
+        self.assertEqual(self.student.patch(f"/api/reports/{report_id}", json=update).status_code, 409)
+        self.assertEqual(self.student.delete(f"/api/reports/{report_id}").status_code, 409)
+        self.assertEqual(self.student.get(f"/api/reports/{report_id}").status_code, 200)
+
+    def test_owned_submitted_report_can_be_deleted(self):
+        submitted = self.submit_report()
+        report_id = submitted.get_json()["report"]["id"]
+
+        deleted = self.student.delete(f"/api/reports/{report_id}")
+
+        self.assertEqual(deleted.status_code, 200, deleted.get_json())
+        self.assertEqual(self.student.get(f"/api/reports/{report_id}").status_code, 404)
+
+    def test_report_api_excludes_unsupported_assignment_fields(self):
+        submitted = self.submit_report()
+        report = submitted.get_json()["report"]
+        unsupported_fields = {
+            "assigned_department",
+            "assigned_staff",
+            "investigation_notes",
+        }
+        self.assertTrue(unsupported_fields.isdisjoint(report))
+
+        update = self.management.post(
+            f"/api/reports/{report['id']}/management",
+            json={"assigned_department": "Campus Security", "investigation_notes": "Private notes"},
+        )
+        self.assertEqual(update.status_code, 400, update.get_json())
+
+    def test_client_cannot_attach_an_existing_evidence_filename(self):
+        evidence_folder = os.path.join(self.temp_dir.name, "evidence-reference")
+        os.makedirs(evidence_folder)
+        with patch.object(report_routes, "UPLOAD_FOLDER", evidence_folder):
+            submitted = self.submit_report()
+            filename = submitted.get_json()["report"]["evidence_files"][0]
+            attempted = self.other_student.post(
+                "/api/reports",
+                json={
+                    "category": "Safety",
+                    "campus_location": "South Hall",
+                    "description": "Attempt to reference another report's evidence.",
+                    "severity": "Medium",
+                    "incident_datetime": "2026-09-30T14:45",
+                    "evidence_files": [filename],
+                },
+            )
+
+        self.assertEqual(attempted.status_code, 400, attempted.get_json())
+
+    def test_student_edit_can_add_evidence_uploads(self):
+        evidence_folder = os.path.join(self.temp_dir.name, "evidence-edit")
+        os.makedirs(evidence_folder)
+        with patch.object(report_routes, "UPLOAD_FOLDER", evidence_folder):
+            submitted = self.student.post(
+                "/api/reports",
+                json={
+                    "category": "Safety",
+                    "campus_location": "North Hall",
+                    "description": "Initial report description.",
+                    "severity": "Medium",
+                    "incident_datetime": "2026-09-30T14:45",
+                },
+            )
+            report_id = submitted.get_json()["report"]["id"]
+            updated = self.student.patch(
+                f"/api/reports/{report_id}",
+                data={
+                    "description": "Updated report with evidence.",
+                    "evidence": (BytesIO(b"edited evidence"), "updated.jpg"),
+                },
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(updated.status_code, 200, updated.get_json())
+        report = updated.get_json()["report"]
+        self.assertEqual(report["description"], "Updated report with evidence.")
+        self.assertEqual(report["title"], "Safety report at North Hall")
+        self.assertEqual(len(report["evidence_files"]), 1)
+        self.assertTrue(os.path.isfile(os.path.join(evidence_folder, report["evidence_files"][0])))
 
     def test_unified_login_authenticates_and_routes_by_role(self):
         student_on_student_login = self.student.post(
@@ -246,9 +330,6 @@ class ReportWorkflowTests(unittest.TestCase):
             f"/api/reports/{report['id']}/management",
             json={
                 "status": "Under Review",
-                "assigned_department": "Campus Security",
-                "assigned_staff": "Evening Officer",
-                "investigation_notes": "The fixture has been inspected.",
                 "management_response": "An officer is reviewing the entrance.",
                 "action_details": "Temporary lighting was installed.",
             },
@@ -271,7 +352,6 @@ class ReportWorkflowTests(unittest.TestCase):
         detail = student.get(f"/api/reports/{report['id']}").get_json()
         self.assertEqual(detail["report"]["status"], "Closed")
         self.assertEqual(detail["report"]["action_details"], "Temporary lighting was installed.")
-        self.assertEqual(detail["report"]["assigned_department"], "Campus Security")
         self.assertEqual(detail["responses"][0]["message"], "An officer is reviewing the entrance.")
         self.assertEqual([entry["new_status"] for entry in detail["status_history"]], [
             "Submitted", "Under Review", "Resolved", "Closed"
@@ -298,8 +378,6 @@ class ReportWorkflowTests(unittest.TestCase):
         self.assertEqual(report["title"], "Facilities report at Science Building")
         self.assertEqual(report["incident_date"], "2026-09-30")
         self.assertEqual(report["incident_time"], "14:45")
-        self.assertEqual(report["urgency"], "Normal")
-        self.assertEqual(report["incident_type"], "Facilities")
         self.assertEqual(len(report["evidence_files"]), 1)
         self.assertTrue(os.path.isfile(os.path.join(evidence_folder, report["evidence_files"][0])))
 
@@ -367,12 +445,10 @@ class ReportWorkflowTests(unittest.TestCase):
                     "title": "New legacy-compatible report",
                     "description": "Submitted after upgrade.",
                     "category": "Safety",
-                    "incident_type": "Hazard",
                     "campus_location": "South Hall",
                     "incident_date": "2026-09-30",
                     "incident_time": "11:30",
                     "severity": "Medium",
-                    "urgency": "Normal",
                 },
                 1,
             )
@@ -415,6 +491,34 @@ class ReportWorkflowTests(unittest.TestCase):
             admin = authenticate_user("admin@123", "admin")
         self.assertEqual(admin["role"], "management")
 
+    def test_management_bootstrap_preserves_configured_admin_password(self):
+        path = os.path.join(self.temp_dir.name, "configured-management.db")
+        connection = sqlite3.connect(path)
+        connection.executescript(Path("database/schema.sql").read_text(encoding="utf-8"))
+        connection.close()
+
+        create_default_management(path, "ops@example.com", "first-secret")
+        connection = sqlite3.connect(path)
+        original_hash = connection.execute(
+            "SELECT password_hash FROM users WHERE email = ?",
+            ("ops@example.com",),
+        ).fetchone()[0]
+        connection.close()
+
+        create_default_management(path, "ops@example.com", "rotated-secret")
+
+        with patch("backend.models.user_model.DATABASE_PATH", path):
+            from backend.services.auth_service import authenticate_user
+            self.assertIsNotNone(authenticate_user("ops@example.com", "first-secret"))
+            self.assertIsNone(authenticate_user("ops@example.com", "rotated-secret"))
+        connection = sqlite3.connect(path)
+        final_hash = connection.execute(
+            "SELECT password_hash FROM users WHERE email = ?",
+            ("ops@example.com",),
+        ).fetchone()[0]
+        connection.close()
+        self.assertEqual(final_hash, original_hash)
+
     def test_evidence_upload_persists_and_requires_report_ownership(self):
         evidence_folder = os.path.join(self.temp_dir.name, "evidence-specific")
         os.makedirs(evidence_folder)
@@ -422,12 +526,10 @@ class ReportWorkflowTests(unittest.TestCase):
             "title": "Evidence test report",
             "description": "An image is attached to this report.",
             "category": "Safety",
-            "incident_type": "Hazard",
             "campus_location": "Library",
             "incident_date": "2026-09-30",
             "incident_time": "12:00",
             "severity": "Medium",
-            "urgency": "Normal",
             "evidence": (BytesIO(b"test image bytes"), "hallway.png"),
         }
 

@@ -28,6 +28,7 @@ from backend.models.user_model import get_user_by_id
 from config import ALLOWED_IMAGE_EXTENSIONS, UPLOAD_FOLDER
 
 report_bp = Blueprint("reports", __name__, url_prefix="/api")
+UNSUPPORTED_REPORT_FIELDS = {"assigned_department", "assigned_staff", "investigation_notes"}
 
 
 def require_auth():
@@ -61,6 +62,31 @@ def is_allowed_upload(filename):
     return extension in ALLOWED_IMAGE_EXTENSIONS
 
 
+def save_uploaded_evidence():
+    uploads = [item for item in request.files.getlist("evidence") if item and item.filename]
+    for uploaded_file in uploads:
+        safe_name = secure_filename(uploaded_file.filename)
+        if not is_allowed_upload(safe_name):
+            return None, "Evidence must be a PNG, JPG, JPEG, or WEBP image."
+
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    filenames = []
+    try:
+        for uploaded_file in uploads:
+            extension = os.path.splitext(secure_filename(uploaded_file.filename))[1].lower()
+            name = f"{uuid.uuid4().hex}{extension}"
+            uploaded_file.save(os.path.join(UPLOAD_FOLDER, name))
+            filenames.append(name)
+    except Exception:
+        for filename in filenames:
+            try:
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            except OSError:
+                pass
+        raise
+    return filenames, None
+
+
 def parse_payload():
     payload = request.get_json(silent=True)
     if payload is not None:
@@ -82,13 +108,16 @@ def normalize_report_payload(payload):
         values["incident_date"] = parsed_datetime.date().isoformat()
         values["incident_time"] = parsed_datetime.time().strftime("%H:%M")
 
-    if not str(values.get("title", "")).strip():
-        category = str(values.get("category", "Safety")).strip() or "Safety"
-        location = str(values.get("campus_location", "")).strip() or "Campus"
-        values["title"] = f"{category} report at {location}"
-    values.setdefault("incident_type", str(values.get("category", "Safety")).strip() or "Safety")
-    values.setdefault("urgency", "Normal")
     return values, None
+
+
+def validate_report_contract(payload):
+    unsupported = UNSUPPORTED_REPORT_FIELDS.intersection(payload)
+    if unsupported:
+        return "Assignment and investigation fields are not supported."
+    if "evidence_files" in payload:
+        return "Evidence must be uploaded with the report."
+    return None
 
 
 def validate_report_payload(payload, existing=None):
@@ -166,34 +195,26 @@ def reports():
     payload, normalization_error = normalize_report_payload(parse_payload())
     if normalization_error:
         return jsonify(success=False, message=normalization_error), 400
+    contract_error = validate_report_contract(payload)
+    if contract_error:
+        return jsonify(success=False, message=contract_error), 400
     validation_error = validate_report_payload(payload)
     if validation_error:
         return jsonify(success=False, message=validation_error), 400
 
-    files = []
-    for uploaded_file in request.files.getlist("evidence"):
-        if uploaded_file and uploaded_file.filename:
-            if not is_allowed_upload(uploaded_file.filename):
-                return jsonify(success=False, message="Evidence must be a PNG, JPG, JPEG, or WEBP image."), 400
-            extension = os.path.splitext(secure_filename(uploaded_file.filename))[1].lower()
-            name = f"{uuid.uuid4().hex}{extension}"
-            upload_path = os.path.join(UPLOAD_FOLDER, name)
-            uploaded_file.save(upload_path)
-            files.append(name)
-
-    supplied_files = payload.get("evidence_files") or []
-    if isinstance(supplied_files, str):
-        supplied_files = [supplied_files]
-    if not isinstance(supplied_files, list):
-        return jsonify(success=False, message="Evidence files must be provided as a list."), 400
-    for filename in supplied_files:
-        safe_name = secure_filename(str(filename))
-        if safe_name != str(filename) or not is_allowed_upload(safe_name):
-            return jsonify(success=False, message="An evidence filename is invalid."), 400
-        files.append(safe_name)
-
+    files, upload_error = save_uploaded_evidence()
+    if upload_error:
+        return jsonify(success=False, message=upload_error), 400
     payload["evidence_files"] = files
-    report = create_report(payload, user["id"])
+    try:
+        report = create_report(payload, user["id"])
+    except Exception:
+        for filename in files:
+            try:
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            except OSError:
+                pass
+        raise
     for management_id in get_management_users():
         create_notification(management_id, f"New safety report {report['report_id']} submitted.", report["id"])
 
@@ -213,18 +234,25 @@ def report_detail(report_id):
     if user["role"] != "management" and report["student_id"] != user["id"]:
         return jsonify(success=False, message="You do not have permission to access this report."), 403
 
+    if request.method in {"PATCH", "DELETE"}:
+        if user["role"] == "management":
+            return jsonify(success=False, message="Management cannot edit or delete student reports."), 403
+        if report["status"] != "Submitted":
+            return jsonify(success=False, message="Only submitted reports can be edited or deleted."), 409
+
     if request.method == "GET":
         return jsonify(success=True, report=report, status_history=get_status_history(report_id), responses=get_responses_for_report(report_id)), 200
 
     if request.method == "DELETE":
-        if user["role"] != "management" and report["student_id"] != user["id"]:
-            return jsonify(success=False, message="You are not allowed to delete this report."), 403
         delete_report(report_id)
         return jsonify(success=True, message="Report deleted successfully."), 200
 
     payload, normalization_error = normalize_report_payload(parse_payload())
     if normalization_error:
         return jsonify(success=False, message=normalization_error), 400
+    contract_error = validate_report_contract(payload)
+    if contract_error:
+        return jsonify(success=False, message=contract_error), 400
     if not payload:
         return jsonify(success=False, message="No report data provided."), 400
 
@@ -232,7 +260,27 @@ def report_detail(report_id):
     if validation_error:
         return jsonify(success=False, message=validation_error), 400
 
-    updated = update_report(report_id, payload)
+    files, upload_error = save_uploaded_evidence()
+    if upload_error:
+        return jsonify(success=False, message=upload_error), 400
+    if files:
+        payload["evidence_files"] = [*report["evidence_files"], *files]
+    try:
+        updated = update_report(report_id, payload)
+    except Exception:
+        for filename in files:
+            try:
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            except OSError:
+                pass
+        raise
+    if not updated:
+        for filename in files:
+            try:
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            except OSError:
+                pass
+        return jsonify(success=False, message="Report not found."), 404
     return jsonify(success=True, message="Report updated successfully.", report=updated), 200
 
 
@@ -249,6 +297,9 @@ def report_management_update(report_id):
         return jsonify(success=False, message="Report not found."), 404
 
     payload = parse_payload()
+    contract_error = validate_report_contract(payload)
+    if contract_error:
+        return jsonify(success=False, message=contract_error), 400
     status = str(payload.get("status", report["status"])).strip()
     if status and status not in VALID_STATUSES:
         return jsonify(success=False, message="Invalid status selected."), 400
@@ -383,4 +434,5 @@ def notification_detail(notification_id):
         return jsonify(success=False, message="Notification not found."), 404
 
     mark_notification_read(notification_id, user["id"])
+    notification["is_read"] = True
     return jsonify(success=True, message="Notification marked as read.", notification=notification), 200

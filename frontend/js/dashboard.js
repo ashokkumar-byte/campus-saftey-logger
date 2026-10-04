@@ -268,7 +268,7 @@ function renderStat(label, value, tone = "total") {
   return `<div class="card stat-box stat-${tone}"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value">${value}</div></div>`;
 }
 
-function triggerNotificationReport(reportId, role = "student") {
+async function triggerNotificationReport(reportId, role = "student") {
   if (!reportId) return;
   const openTargets = [];
   if (role === "management") {
@@ -286,7 +286,21 @@ function triggerNotificationReport(reportId, role = "student") {
 
   if (!openTargets.length) {
     if (role === "student") {
-      window.location.href = "/reports";
+      const detailPanel = document.getElementById("dashboardReportDetail");
+      if (detailPanel && document.body.dataset.page === "dashboard") {
+        try {
+          const detail = await apiFetch(`/api/reports/${reportId}`);
+          renderStudentReportDetail(detailPanel, detail);
+          detailPanel.scrollIntoView({ behavior: "smooth", block: "center" });
+          detailPanel.classList.add("report-highlight");
+          window.setTimeout(() => detailPanel.classList.remove("report-highlight"), 2200);
+        } catch (error) {
+          setMessage(detailPanel, error.message, true);
+          detailPanel.hidden = false;
+        }
+      } else {
+        window.location.href = "/reports";
+      }
     }
     return;
   }
@@ -312,7 +326,7 @@ async function markNotificationAsRead(notificationId, reportId, role = "student"
   try {
     await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
     if (reportId) {
-      triggerNotificationReport(reportId, role);
+      await triggerNotificationReport(reportId, role);
     }
   } catch (error) {
     console.warn("Notification read failed:", error.message);
@@ -378,28 +392,12 @@ async function initStudentReports() {
       </div>
       <div class="form-grid">
         <div class="form-group"><label>Category</label><div>${escapeHtml(report.category || "Safety")}</div></div>
-        <div class="form-group"><label>Incident Type</label><div>${escapeHtml(report.incident_type || "—")}</div></div>
         <div class="form-group"><label>Location</label><div>${escapeHtml(report.campus_location || "—")}</div></div>
-        <div class="form-group"><label>Building / Area</label><div>${escapeHtml(report.building_area || "—")}</div></div>
-        <div class="form-group"><label>Date</label><div>${escapeHtml(report.incident_date || "—")}</div></div>
-        <div class="form-group"><label>Time</label><div>${escapeHtml(report.incident_time || "—")}</div></div>
+        <div class="form-group"><label>Date &amp; Time</label><div>${escapeHtml(report.incident_date || "—")} ${escapeHtml(report.incident_time || "")}</div></div>
         <div class="form-group"><label>Severity</label><div>${escapeHtml(report.severity || "—")}</div></div>
-        <div class="form-group"><label>Urgency</label><div>${escapeHtml(report.urgency || "—")}</div></div>
       </div>
       <p><strong>Description:</strong> ${escapeHtml(report.description || "No description provided.")}</p>
-      <p><strong>Additional Details:</strong> ${escapeHtml(report.additional_details || "No additional details.")}</p>
       <p><strong>Action Taken:</strong> ${escapeHtml(report.action_details || "No action recorded yet.")}</p>
-      <div class="form-grid">
-        <div class="form-group"><label>People Involved</label><div>${escapeHtml(report.people_involved || "Not provided")}</div></div>
-        <div class="form-group"><label>Witnesses</label><div>${escapeHtml(report.witnesses || "Not provided")}</div></div>
-        <div class="form-group"><label>Contact Preference</label><div>${escapeHtml(report.contact_preference || "Email")}</div></div>
-        <div class="form-group"><label>Assigned Department / Staff</label><div>${escapeHtml([report.assigned_department, report.assigned_staff].filter(Boolean).join(" / ") || "Not assigned")}</div></div>
-      </div>
-      <div class="status-actions">
-        <span><strong>Immediate Danger:</strong> ${report.immediate_danger ? "Yes" : "No"}</span>
-        <span><strong>Injury:</strong> ${report.injury_involved ? "Yes" : "No"}</span>
-        <span><strong>Emergency Assistance:</strong> ${report.emergency_assistance_required ? "Yes" : "No"}</span>
-      </div>
       <h3>Evidence</h3>
       ${(report.evidence_files || []).length ? report.evidence_files.map((filename) => `
         <a class="evidence-link" href="/api/reports/${report.id}/evidence/${encodeURIComponent(filename)}" target="_blank" rel="noopener">${escapeHtml(filename)}</a>
@@ -444,8 +442,10 @@ async function initStudentReports() {
           <td>${formatDate(report.updated_at)}</td>
           <td>
             <button type="button" class="secondary-btn" data-action="view" data-id="${report.id}">View</button>
-            <button type="button" class="secondary-btn" data-action="edit" data-id="${report.id}">Edit</button>
-            <button type="button" class="danger-btn" data-action="delete" data-id="${report.id}">Delete</button>
+            ${report.status === "Submitted" ? `
+              <button type="button" class="secondary-btn" data-action="edit" data-id="${report.id}">Edit</button>
+              <button type="button" class="danger-btn" data-action="delete" data-id="${report.id}">Delete</button>
+            ` : ""}
           </td>
         </tr>
       `).join("");
@@ -521,18 +521,11 @@ async function initStudentReports() {
 
     try {
       const formData = new FormData(reportForm);
-      const payload = Object.fromEntries(formData.entries());
-      const incidentDateTime = String(formData.get("incident_datetime") || "");
-      if (incidentDateTime) {
-        payload.incident_date = incidentDateTime.slice(0, 10);
-        payload.incident_time = incidentDateTime.slice(11, 16);
-      }
-      delete payload.incident_datetime;
 
       if (editingId) {
         await apiFetch(`/api/reports/${editingId}`, {
           method: "PATCH",
-          body: payload,
+          body: formData,
         });
         setMessage(reportMessage, "Report updated successfully.");
       } else {
@@ -560,7 +553,6 @@ async function initStudentReports() {
 async function initManagement() {
   const filter = document.getElementById("statusFilter");
   const severityFilter = document.getElementById("severityFilter");
-  const urgencyFilter = document.getElementById("urgencyFilter");
   const searchInput = document.getElementById("searchInput");
   const reportList = document.getElementById("managementReportList");
   const managementMessage = document.getElementById("managementMessage");
@@ -640,7 +632,6 @@ async function initManagement() {
               <h3>Report Information</h3>
               <p><strong>Title:</strong> ${escapeHtml(report.title || "Safety report")}</p>
               <p><strong>Description:</strong> ${escapeHtml(report.description || "No description provided.")}</p>
-              <p><strong>Additional Details:</strong> ${escapeHtml(report.additional_details || "No additional details.")}</p>
               <p><strong>Evidence:</strong> ${evidence}</p>
             </div>
 
@@ -822,6 +813,7 @@ async function initManagement() {
           const notificationId = Number(element.dataset.notificationId);
           const reportId = element.dataset.reportId;
           await markNotificationAsRead(notificationId, reportId, "management");
+          if (reportId) await openReportModal(Number(reportId));
           await renderReports();
         });
       });
@@ -829,16 +821,14 @@ async function initManagement() {
       let reports = allReports;
       const statusFilter = filter.value;
       const severityValue = severityFilter?.value || "all";
-      const urgencyValue = urgencyFilter?.value || "all";
       const search = searchInput.value.trim().toLowerCase();
 
       reports = reports.filter((report) => {
         const matchesStatus = statusFilter === "all" || report.status === statusFilter;
         const matchesSeverity = severityValue === "all" || report.severity === severityValue;
-        const matchesUrgency = urgencyValue === "all" || report.urgency === urgencyValue;
-        const haystack = `${report.report_id} ${report.title} ${report.description} ${report.category} ${report.incident_type} ${report.campus_location} ${report.student_name || ""} ${report.student_email || ""}`.toLowerCase();
+        const haystack = `${report.report_id} ${report.title} ${report.description} ${report.category} ${report.campus_location} ${report.student_name || ""} ${report.student_email || ""}`.toLowerCase();
         const matchesSearch = !search || haystack.includes(search);
-        return matchesStatus && matchesSeverity && matchesUrgency && matchesSearch;
+        return matchesStatus && matchesSeverity && matchesSearch;
       });
 
       if (reportCount) reportCount.textContent = `${reports.length} of ${allReports.length}`;
@@ -881,7 +871,6 @@ async function initManagement() {
 
   filter.addEventListener("change", renderReports);
   severityFilter?.addEventListener("change", renderReports);
-  urgencyFilter?.addEventListener("change", renderReports);
   searchInput.addEventListener("input", renderReports);
   await renderReports();
 }
@@ -894,6 +883,11 @@ async function initProfile(user) {
   const saveButton = document.getElementById("saveProfileButton");
 
   if (!fullNameInput || !emailInput || !roleInput || !saveButton) return;
+
+  document.querySelectorAll(".nav-link").forEach((link) => {
+    const managementLink = link.getAttribute("href")?.startsWith("/management");
+    link.hidden = user.role === "management" ? !managementLink : managementLink;
+  });
 
   const loadProfile = async () => {
     try {

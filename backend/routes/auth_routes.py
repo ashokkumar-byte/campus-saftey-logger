@@ -74,18 +74,20 @@ def profile():
             "created_at": user["created_at"], "updated_at": user["updated_at"],
         })
 
-    data = request.get_json(silent=True) if request.is_json else {}
+    data = request.get_json(silent=True) if request.is_json else None
     if not isinstance(data, dict):
         return jsonify(success=False, message="Profile update data is required."), 400
 
     full_name = str(data.get("full_name", user["full_name"])).strip()
     email = str(data.get("email", user["email"])).strip().lower()
-    if not full_name:
+    if not validate_full_name(full_name):
         return jsonify(success=False, message="Please enter a valid full name."), 400
+    if not validate_email(email):
+        return jsonify(success=False, message="Please enter a valid email address."), 400
 
     updated_user = update_user_profile(user_id, full_name=full_name, email=email)
     if not updated_user:
-        return jsonify(success=False, message="Unable to update profile."), 400
+        return jsonify(success=False, message="An account with this email already exists."), 409
 
     return jsonify(success=True, message="Profile updated successfully.", user={
         "id": updated_user["id"], "full_name": updated_user["full_name"],
